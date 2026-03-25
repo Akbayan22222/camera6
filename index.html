@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banket 6 Slots - Medet</title>
+    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+    <style>
+        body { margin: 0; background: #000; color: white; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; height: 100vh; overflow: hidden; }
+        
+        /* Шапка с именем */
+        #header { width: 100%; padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; box-sizing: border-box; }
+        #owner-name { font-size: 1.2rem; font-weight: 800; color: #cda434; letter-spacing: 2px; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
+        #status { color: #00fbff; font-size: 0.9rem; text-transform: uppercase; }
+
+        /* Главное окно камеры */
+        #main-view { position: relative; width: 95vw; height: 50vh; border-radius: 15px; overflow: hidden; border: 3px solid #333; background: #111; margin-bottom: 20px; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        #flash { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; z-index: 10; pointer-events: none; }
+
+        /* Сетка из 6 окошек */
+        #slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: 10px; width: 95vw; height: 30vh; }
+        .slot { background: #111; border: 2px solid #cda434; border-radius: 10px; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; }
+        .slot canvas { width: 100%; height: 100%; object-fit: cover; display: none; }
+        .slot::before { content: attr(data-label); color: #333; font-weight: bold; font-size: 1.5rem; }
+        .slot.active { border-color: #00fbff; box-shadow: 0 0 15px rgba(0, 251, 255, 0.5); }
+        .slot.filled canvas { display: block; }
+        .slot.filled::before { display: none; }
+
+        /* Кнопки */
+        .controls { position: absolute; bottom: 32vh; display: flex; gap: 10px; z-index: 20; }
+        button { padding: 12px 25px; border-radius: 50px; border: none; font-weight: bold; cursor: pointer; text-transform: uppercase; }
+        #btn-pick { background: #cda434; color: black; font-size: 1rem; }
+        #btn-reset { background: #444; color: white; }
+        button:disabled { opacity: 0.3; }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <div id="owner-name">MEDET MUHAMEDZHANOV</div>
+        <div id="status">Загрузка ИИ...</div>
+    </div>
+    
+    <div id="main-view">
+        <video id="video" autoplay muted playsinline></video>
+        <div id="flash"></div>
+    </div>
+
+    <div class="controls">
+        <button id="btn-pick" disabled onclick="captureNext()">🎯 Поймать в окно <span id="next-slot-num">1</span></button>
+        <button id="btn-reset" onclick="resetSlots()">🔄 Сброс</button>
+    </div>
+
+    <div id="slots-grid">
+        <div class="slot active" data-label="1" id="slot-0"></div>
+        <div class="slot" data-label="2" id="slot-1"></div>
+        <div class="slot" data-label="3" id="slot-2"></div>
+        <div class="slot" data-label="4" id="slot-3"></div>
+        <div class="slot" data-label="5" id="slot-4"></div>
+        <div class="slot" data-label="6" id="slot-5"></div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const btnPick = document.getElementById('btn-pick');
+        const status = document.getElementById('status');
+        const flash = document.getElementById('flash');
+        
+        let detections = [];
+        let currentSlot = 0;
+        const totalSlots = 6;
+
+        async function init() {
+            const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+            try {
+                await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
+                status.innerText = "Система готова";
+                startStream();
+            } catch (e) { status.innerText = "Ошибка ИИ"; }
+        }
+
+        async function startStream() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                btnPick.disabled = false;
+                runAI();
+            };
+        }
+
+        async function runAI() {
+            setInterval(async () => {
+                if (video.readyState === 4) {
+                    detections = await faceapi.detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }));
+                }
+            }, 500);
+        }
+
+        function captureNext() {
+            if (currentSlot >= totalSlots) {
+                alert("Все окна заполнены!");
+                return;
+            }
+            if (detections.length === 0) {
+                alert("ИИ не видит человека в кадре!");
+                return;
+            }
+
+            // Эффект вспышки
+            flash.style.opacity = "1";
+            setTimeout(() => flash.style.opacity = "0", 150);
+
+            // Выбираем одного рандомного из тех, кто в камере
+            const target = detections[Math.floor(Math.random() * detections.length)];
+            const { x, y, width, height } = target.box;
+
+            // Создаем холст для текущего слота
+            const slotEl = document.getElementById(`slot-${currentSlot}`);
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Настраиваем размер холста (квадрат)
+            canvas.width = 400;
+            canvas.height = 400;
+
+            // Рисуем только область лица/силуэта
+            ctx.drawImage(video, x, y, width, height, 0, 0, 400, 400);
+
+            slotEl.innerHTML = ''; // Очищаем текст
+            slotEl.appendChild(canvas);
+            slotEl.classList.add('filled');
+            slotEl.classList.remove('active');
+
+            currentSlot++;
+
+            if (currentSlot < totalSlots) {
+                document.getElementById(`slot-${currentSlot}`).classList.add('active');
+                document.getElementById('next-slot-num').innerText = currentSlot + 1;
+            } else {
+                btnPick.disabled = true;
+                btnPick.innerText = "ГОТОВО";
+            }
+        }
+
+        function resetSlots() {
+            currentSlot = 0;
+            btnPick.disabled = false;
+            btnPick.innerHTML = '🎯 Поймать в окно <span id="next-slot-num">1</span>';
+            for(let i=0; i<6; i++) {
+                const el = document.getElementById(`slot-${i}`);
+                el.innerHTML = '';
+                el.classList.remove('filled', 'active');
+            }
+            document.getElementById('slot-0').classList.add('active');
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
